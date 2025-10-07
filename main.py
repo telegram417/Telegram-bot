@@ -1,7 +1,7 @@
 from telegram import Update, ReplyKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 import os
-TOKEN = os.getenv("8302098861:AAHUqxSd6v66ZVcE_Jp0nWqVndFYlW4PGV0")
+TOKEN = os.getenv("")
 
 
 # Store user data
