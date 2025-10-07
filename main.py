@@ -1,7 +1,11 @@
 from telegram import Update, ReplyKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 import os
-TOKEN = os.getenv("BOT_TOKEN")
+from telegram import Update, ReplyKeyboardMarkup
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
+
+TOKEN = os.getenv("BOT_TOKEN")  # ✅ Notice: we use BOT_TOKEN here, not empty quotes
+
 
 
 
