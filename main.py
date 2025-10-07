@@ -7,7 +7,19 @@ from telegram.ext import Application, CommandHandler, MessageHandler, filters, C
 TOKEN = os.getenv("BOT_TOKEN")
 
 
+# Handle stickers
+async def handle_sticker(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if user_id in users and users[user_id].get("partner"):
+        partner_id = users[user_id]["partner"]
+        sticker = update.message.sticker.file_id
+        await context.bot.send_sticker(partner_id, sticker)
+    else:
+        await update.message.reply_text("⚠️ You are not chatting with anyone.")
 
+# Add this to handlers:
+app.add_handler(MessageHandler(filters.Sticker.ALL, handle_sticker))
+    
 
 # Store user data
 users = {}
