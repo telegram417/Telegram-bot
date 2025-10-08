@@ -8,12 +8,19 @@ users = {}
 waiting_users = []
 premium_users = {"@tandoori123"}
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    users[user.id] = {"gender": None, "age": None, "partner": None, "invites": 0}
-    keyboard = [["Male", "Female"]]
-    markup = ReplyKeyboardMarkup(keyboard, one_time_keyboard=True, resize_keyboard=True)
-    await update.message.reply_text("👋 Welcome! Please select your gender:", reply_markup=markup)
+async def about(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "💘 *About MeetAnonymousBot*\n\n"
+        "Welcome to the safest place to chat anonymously! 💬\n\n"
+        "✨ Features:\n"
+        "• Anonymous random chat with strangers 🌍\n"
+        "• Choose your gender to match 🔍\n"
+        "• Send stickers and share vibes 🎨\n"
+        "• Invite 5 friends to unlock Premium for 7 days 💝\n\n"
+        "🔒 Stay respectful and enjoy meeting new people!",
+        parse_mode="Markdown"
+    )
+    
 
 async def about(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
