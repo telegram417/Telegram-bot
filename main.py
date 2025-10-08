@@ -18,13 +18,7 @@ async def about(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• Send stickers and share vibes 🎨\n"
         "• Invite 5 friends to unlock Premium for 7 days 💝\n\n"
         "🔒 Stay respectful and enjoy meeting new people!",
-        parse_mode="Markdown"
-    )
-    
-
-async def about(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "💘 *About MeetAnonymousBot*
+        parse_mode="Markdown")
 "
         "Chat anonymously and meet new people.
 
