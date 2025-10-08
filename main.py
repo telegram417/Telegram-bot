@@ -318,7 +318,10 @@ def build_app(token):
     app.add_handler(CommandHandler("find", find_handler))
     app.add_handler(CommandHandler("stop", stop_handler))
     app.add_handler(CommandHandler("setpref", setpref_handler))
-    app.add_handler(MessageHandler(filters.STICKER, sticker_handler))
+    from telegram.ext import filters
+
+app.add_handler(MessageHandler(filters.Sticker.ALL, sticker_handler))
+
     app.add_handler(MessageHandler(filters.PHOTO, photo_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))
     return app
