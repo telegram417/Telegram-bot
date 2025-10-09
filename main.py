@@ -4,7 +4,60 @@ from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 import os
 import threading
+from flask import Flask, request
+from telegram import Update
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
+import os
+import asyncio
 
+TOKEN = os.getenv("BOT_TOKEN", "YOUR_TELEGRAM_BOT_TOKEN")
+URL = os.getenv("RENDER_EXTERNAL_URL", "https://telegram-bot-99.onrender.com")  # replace if different
+
+app = Flask(__name__)
+
+# --- Telegram bot handlers ---
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("🌸 Hello there! Your bot is alive and sparkling on Render ✨")
+
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("💬 Just send any message — I’ll echo it back beautifully 💫")
+
+async def echo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text
+    await update.message.reply_text(f"🌿 You said: {text}")
+
+# --- Create Telegram Application ---
+application = Application.builder().token(TOKEN).build()
+application.add_handler(CommandHandler("start", start))
+application.add_handler(CommandHandler("help", help_command))
+application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, echo))
+
+# --- Flask Routes ---
+@app.route("/")
+def index():
+    return "🌐 Telegram Bot is running on Render perfectly!"
+
+@app.route(f"/{TOKEN}", methods=["POST"])
+async def webhook():
+    """Webhook endpoint for Telegram updates"""
+    update = Update.de_json(request.get_json(force=True), application.bot)
+    await application.process_update(update)
+    return "OK", 200
+
+# --- Set Webhook on startup ---
+async def set_webhook():
+    webhook_url = f"{URL}/{TOKEN}"
+    await application.bot.set_webhook(webhook_url)
+    print(f"✅ Webhook set to {webhook_url}")
+
+@app.before_first_request
+def before_first_request():
+    asyncio.run(set_webhook())
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
+    
 # Telegram bot token
 TOKEN = os.getenv("BOT_TOKEN", "YOUR_TELEGRAM_BOT_TOKEN")
 
