@@ -1,6 +1,5 @@
 import os
 import time
-import threading
 from telegram import Update, ReplyKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
@@ -24,13 +23,13 @@ def is_premium(username):
 # /start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    users[user_id] = {"gender": None, "partner": None, "age": None, "match_pref": None}
+    users[user_id] = {"gender": None, "partner": None, "age": None, "location": None, "interest": None, "match_pref": None}
 
     keyboard = [["👨 Male", "👩 Female"]]
     await update.message.reply_text(
         "🌈 *Welcome to MeetAnonymousBot!* 💬\n\n"
-        "Chat anonymously with people around the world 🌍\n"
-        "But first, tell me your gender 👇",
+        "Chat anonymously with people worldwide 🌍\n\n"
+        "But first, choose your gender 👇",
         parse_mode="Markdown",
         reply_markup=ReplyKeyboardMarkup(keyboard, one_time_keyboard=True, resize_keyboard=True)
     )
@@ -41,12 +40,11 @@ async def gender_select(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     text = update.message.text.strip()
 
+    gender = None
     if text == "👨 Male":
         gender = "Male"
     elif text == "👩 Female":
         gender = "Female"
-    else:
-        gender = None
 
     if gender:
         users[user_id]["gender"] = gender
@@ -64,15 +62,42 @@ async def set_age(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if len(context.args) == 1 and context.args[0].isdigit():
         users[user_id]["age"] = int(context.args[0])
+        await update.message.reply_text("📍 Great! Now tell me — where are you from?")
+        users[user_id]["next_step"] = "location"
+    else:
+        await update.message.reply_text("⚠️ Use like this → /age 20")
+
+
+# Handle location & interest
+async def extra_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    text = update.message.text.strip()
+
+    if "next_step" not in users[user_id]:
+        partner_id = users.get(user_id, {}).get("partner")
+        if partner_id:
+            await context.bot.copy_message(chat_id=partner_id, from_chat_id=user_id, message_id=update.message.message_id)
+        else:
+            await update.message.reply_text("⚠️ You’re not chatting yet. Use /find to start.")
+        return
+
+    step = users[user_id]["next_step"]
+
+    if step == "location":
+        users[user_id]["location"] = text
+        users[user_id]["next_step"] = "interest"
+        await update.message.reply_text("💬 Awesome! Now tell me your *interest* or reason for chatting.\nExample: `Just bored`, `Want to make friends`, etc.", parse_mode="Markdown")
+
+    elif step == "interest":
+        users[user_id]["interest"] = text
+        del users[user_id]["next_step"]
         await update.message.reply_text(
-            "✅ Age saved!\nNow choose who you want to chat with 👇",
+            "✅ Profile completed!\nNow choose who you want to chat with 👇",
             reply_markup=ReplyKeyboardMarkup(
                 [["🔍 Search Male", "🔍 Search Female"], ["🎯 Search Anyone"]],
                 resize_keyboard=True
             )
         )
-    else:
-        await update.message.reply_text("⚠️ Use like this → /age 20")
 
 
 # /find
@@ -81,15 +106,16 @@ async def find(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text if update.message else ""
     username = f"@{update.effective_user.username}" if update.effective_user.username else "Unknown"
 
-    # Validate profile
     if user_id not in users or not users[user_id].get("gender"):
         await update.message.reply_text("⚠️ Please select your gender using /start first.")
         return
 
-    gender = users[user_id]["gender"]
-    age = users[user_id].get("age")
+    user_data = users[user_id]
+    if not user_data.get("age") or not user_data.get("location") or not user_data.get("interest"):
+        await update.message.reply_text("⚠️ Please complete your profile first using /age command.")
+        return
 
-    # Determine preference
+    # Search preference
     if "Male" in text:
         pref = "male"
     elif "Female" in text:
@@ -99,7 +125,6 @@ async def find(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     users[user_id]["match_pref"] = pref
 
-    # If non-premium, restrict gender-specific search
     if pref != "any" and not is_premium(username):
         await update.message.reply_text(
             "💎 *Premium Feature*\n\n"
@@ -109,24 +134,26 @@ async def find(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # Search animation
     msg = await update.message.reply_text("🔍 Searching for your match")
-    for dot_count in range(3):
-        await msg.edit_text("🔍 Searching" + " ." * (dot_count + 1))
+    for i in range(3):
+        await msg.edit_text("🔍 Searching" + " ." * (i + 1))
         time.sleep(0.7)
 
-    # Match
+    # Match system
     opposite_list = waiting_users[pref]
     if opposite_list and opposite_list[0] != user_id:
         partner_id = opposite_list.pop(0)
         users[user_id]["partner"] = partner_id
         users[partner_id]["partner"] = user_id
 
-        gender_p1, gender_p2 = users[user_id]["gender"], users[partner_id]["gender"]
-        age_p1, age_p2 = users[user_id].get("age"), users[partner_id].get("age")
+        p1 = users[user_id]
+        p2 = users[partner_id]
 
-        await context.bot.send_message(partner_id, f"🎉 You’re connected!\n👤 Partner: *{gender_p1}, {age_p1 or 'Unknown'}*", parse_mode="Markdown")
-        await update.message.reply_text(f"🎉 You’re connected!\n👤 Partner: *{gender_p2}, {age_p2 or 'Unknown'}*", parse_mode="Markdown")
+        profile1 = f"👤 *{p1['gender']}*, {p1['age']}\n📍 {p1['location']}\n💬 {p1['interest']}"
+        profile2 = f"👤 *{p2['gender']}*, {p2['age']}\n📍 {p2['location']}\n💬 {p2['interest']}"
+
+        await context.bot.send_message(partner_id, f"🎉 You’re connected!\n\nYour partner:\n{profile1}", parse_mode="Markdown")
+        await update.message.reply_text(f"🎉 You’re connected!\n\nYour partner:\n{profile2}", parse_mode="Markdown")
     else:
         waiting_users[pref].append(user_id)
         await update.message.reply_text("⌛ No one found right now, please wait...")
@@ -168,7 +195,23 @@ async def ref(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-# Forward messages (text, photo, video, audio, etc.)
+# /help
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "🤖 *MeetAnonymousBot Help*\n\n"
+        "Here’s what you can do:\n"
+        "• /start — Setup your profile\n"
+        "• /age <age> — Set your age\n"
+        "• /find — Find a random chat partner\n"
+        "• /stop — End current chat\n"
+        "• /ref — Invite friends for Premium\n"
+        "• /help — Show this help menu\n\n"
+        "💡 You can send text, photos, videos, stickers, voice & files freely.",
+        parse_mode="Markdown"
+    )
+
+
+# Forward all other messages
 async def forward_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     partner_id = users.get(user_id, {}).get("partner")
@@ -184,8 +227,10 @@ def build_app(token):
     app.add_handler(CommandHandler("age", set_age))
     app.add_handler(CommandHandler("stop", stop))
     app.add_handler(CommandHandler("ref", ref))
+    app.add_handler(CommandHandler("help", help_command))
     app.add_handler(MessageHandler(filters.Regex("^(👨 Male|👩 Female)$"), gender_select))
     app.add_handler(MessageHandler(filters.Regex("^(🔍 Search Male|🔍 Search Female|🎯 Search Anyone)$"), find))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, extra_info))
     app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, forward_message))
     return app
 
@@ -194,7 +239,7 @@ if __name__ == "__main__":
     if not TOKEN:
         print("❌ BOT_TOKEN missing!")
     else:
-        print("🚀 MeetAnonymousBot v2 running 24/7...")
+        print("🚀 MeetAnonymousBot v3 running...")
         app = build_app(TOKEN)
         app.run_webhook(
             listen="0.0.0.0",
