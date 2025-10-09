@@ -1,9 +1,45 @@
+
+from flask import Flask
+from telegram import Update
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 import os
 import threading
-from flask import Flask
-from telegram import Update, ReplyKeyboardMarkup
-from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters
 
+# Telegram bot token
+TOKEN = os.getenv("BOT_TOKEN", "YOUR_TELEGRAM_BOT_TOKEN")
+
+# Flask app
+app = Flask(__name__)
+
+@app.route('/')
+def home():
+    return "Bot is running!"
+
+# Telegram Bot Handlers
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Hello! Your bot is alive on Render 🚀")
+
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Send /start to see if I'm active.")
+
+# Run Telegram bot
+def run_bot():
+    app_bot = Application.builder().token(TOKEN).build()
+
+    app_bot.add_handler(CommandHandler("start", start))
+    app_bot.add_handler(CommandHandler("help", help_command))
+
+    print("🤖 Telegram bot started successfully.")
+    app_bot.run_polling(allowed_updates=Update.ALL_TYPES)
+
+# Start bot in background thread
+threading.Thread(target=run_bot, daemon=True).start()
+
+# Flask server
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
+    
 # 🌸 Load your bot token from Render environment variables
 TOKEN = os.getenv("BOT_TOKEN")
 if not TOKEN:
