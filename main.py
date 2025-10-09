@@ -1,245 +1,156 @@
 import os
-import json
-import asyncio
-from flask import Flask, request
+import threading
+from flask import Flask
 from telegram import Update, ReplyKeyboardMarkup
-from telegram.ext import (
-    Application,
-    CommandHandler,
-    MessageHandler,
-    filters,
-    ContextTypes,
-    ConversationHandler
-)
-from threading import Thread
+from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters
 
-# ====== Web Server ======
+# 🌸 Load your bot token from Render environment variables
+TOKEN = os.getenv("BOT_TOKEN")
+if not TOKEN:
+    raise ValueError("⚠️ BOT_TOKEN environment variable not set! Go to Render → Environment → Add Variable → Key: BOT_TOKEN, Value: your bot token.")
+
+# Flask app (Render pings this to keep bot alive)
 app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "💘 MeetAnonymousBOT is alive and glowing 🌸"
+    return "🌐 MeetAnonymousBOT is running smoothly!"
 
-@app.route('/webhook', methods=['POST'])
-def webhook():
-    update = Update.de_json(request.get_json(force=True), application.bot)
-    asyncio.run(application.process_update(update))
-    return "ok"
-
-# ====== In-memory data ======
+# In-memory data
 users = {}
-active_chats = {}
-DATA_FILE = "users.json"
+waiting_users = []
 
-def load_data():
-    global users
-    if os.path.exists(DATA_FILE):
-        with open(DATA_FILE, "r") as f:
-            users = json.load(f)
+# --- Helper functions ---
+def get_profile_text(user):
+    return (
+        f"🌸 *Profile*\n"
+        f"👤 Gender: {user.get('gender', 'Not set')}\n"
+        f"🎂 Age: {user.get('age', 'Not set')}\n"
+        f"📍 Location: {user.get('location', 'Not set')}\n"
+        f"🎯 Interest: {user.get('interest', 'Not set')}"
+    )
 
-def save_data():
-    with open(DATA_FILE, "w") as f:
-        json.dump(users, f)
-
-def get_user(user_id):
-    return users.get(str(user_id))
-
-def set_user(user_id, data):
-    users[str(user_id)] = data
-    save_data()
-
-# ====== Bot Functions ======
+# --- Commands ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    user = get_user(user_id)
-    if not user:
-        keyboard = [["♂️ Male", "♀️ Female", "⚧️ Other"]]
+    users[user_id] = users.get(user_id, {"chatting": None})
+    gender_keyboard = [["👨 Male", "👩 Female"]]
+    await update.message.reply_text(
+        "👋 Welcome to *MeetAnonymousBOT*!\n\nLet's set up your profile 💫\nChoose your gender:",
+        parse_mode="Markdown",
+        reply_markup=ReplyKeyboardMarkup(gender_keyboard, one_time_keyboard=True, resize_keyboard=True)
+    )
+
+async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    text = update.message.text.strip()
+
+    if user_id not in users:
+        await update.message.reply_text("⚠️ Please type /start to set up your profile first.")
+        return
+
+    user = users[user_id]
+
+    # Setting gender
+    if "gender" not in user:
+        if "male" in text.lower():
+            user["gender"] = "Male"
+        elif "female" in text.lower():
+            user["gender"] = "Female"
+        else:
+            await update.message.reply_text("⚠️ Please select 'Male' or 'Female' using the buttons.")
+            return
+        await update.message.reply_text("🎂 Great! Now send your *age* (just type a number):", parse_mode="Markdown")
+        return
+
+    # Setting age
+    if "age" not in user:
+        if text.isdigit():
+            user["age"] = int(text)
+            await update.message.reply_text("📍 Nice! Now send your *location*:", parse_mode="Markdown")
+        else:
+            await update.message.reply_text("⚠️ Please enter a valid age (just a number).")
+        return
+
+    # Setting location
+    if "location" not in user:
+        user["location"] = text
+        await update.message.reply_text("🎯 Cool! Lastly, type your *interest* (anything you like):", parse_mode="Markdown")
+        return
+
+    # Setting interest
+    if "interest" not in user:
+        user["interest"] = text
         await update.message.reply_text(
-            "🌸 **Welcome to MeetAnonymousBot!** 🌸\n\n"
-            "Let's create your anonymous profile 💫",
+            f"✨ Profile complete!\n{get_profile_text(user)}\n\nType /find to meet someone new 👀",
             parse_mode="Markdown"
         )
-        await update.message.reply_text(
-            "💬 Choose your gender:",
-            reply_markup=ReplyKeyboardMarkup(keyboard, one_time_keyboard=True)
-        )
-        return 1
-    else:
-        await update.message.reply_text(
-            "🌼 You already have a profile! Use /profile to view or /update to change it."
-        )
-        return ConversationHandler.END
-
-async def gender(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    gender = update.message.text
-    user_id = update.effective_user.id
-    set_user(user_id, {"gender": gender})
-    await update.message.reply_text("🎂 Please send your age (just number):")
-    return 2
-
-async def age(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    age = update.message.text.strip()
-    user_id = update.effective_user.id
-    user = get_user(user_id)
-    user["age"] = age
-    set_user(user_id, user)
-    await update.message.reply_text("📍 Please share your location (e.g. Delhi, India):")
-    return 3
-
-async def location(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    loc = update.message.text
-    user_id = update.effective_user.id
-    user = get_user(user_id)
-    user["location"] = loc
-    set_user(user_id, user)
-    await update.message.reply_text("💭 Now tell your interests or mood (anything you want):")
-    return 4
-
-async def interest(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    interest = update.message.text
-    user_id = update.effective_user.id
-    user = get_user(user_id)
-    user["interest"] = interest
-    set_user(user_id, user)
-    await update.message.reply_text(
-        "✨ Profile setup complete!\n\n"
-        "Use /find to meet someone new 💞\n"
-        "Use /profile to view your info 🌸"
-    )
-    return ConversationHandler.END
-
-# ====== Profile ======
-async def profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = get_user(update.effective_user.id)
-    if not user:
-        await update.message.reply_text("❌ You don’t have a profile yet! Use /start first.")
         return
-    msg = (
-        f"👤 **Your Profile:**\n"
-        f"💫 Gender: {user.get('gender','❔')}\n"
-        f"🎂 Age: {user.get('age','❔')}\n"
-        f"📍 Location: {user.get('location','❔')}\n"
-        f"💭 Interest: {user.get('interest','❔')}\n"
-    )
-    await update.message.reply_text(msg, parse_mode="Markdown")
 
-# ====== Search Animation ======
-async def search_animation(update, context):
-    messages = [
-        "🌍 Searching across the galaxy...",
-        "💫 Matching souls...",
-        "✨ Reading vibes...",
-        "❤️ Almost connected..."
-    ]
-    for msg in messages:
-        await update.message.reply_text(msg)
-        await asyncio.sleep(1.2)
+    # Chat relay
+    partner_id = user.get("chatting")
+    if partner_id:
+        await context.bot.send_message(partner_id, f"{update.message.text}")
+    else:
+        await update.message.reply_text("⚠️ You’re not chatting with anyone. Type /find to start chatting 💬")
 
-# ====== Find Command ======
 async def find(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    if user_id in active_chats:
-        await update.message.reply_text("⚠️ You’re already in a chat!")
-        return
-    user = get_user(user_id)
+    user = users.get(user_id)
     if not user:
-        await update.message.reply_text("❌ Use /start to set up your profile first!")
+        await update.message.reply_text("⚠️ Please set up your profile with /start first.")
         return
-    await search_animation(update, context)
-    for uid, udata in users.items():
-        if int(uid) != user_id and uid not in active_chats and udata.get("gender") != user.get("gender"):
-            partner_id = int(uid)
-            active_chats[user_id] = partner_id
-            active_chats[partner_id] = user_id
-            p_text = (
-                f"💞 You’ve been matched! 💞\n\n"
-                f"👤 Gender: {udata.get('gender')}\n"
-                f"🎂 Age: {udata.get('age')}\n"
-                f"📍 Location: {udata.get('location')}\n"
-                f"💭 Interest: {udata.get('interest')}\n"
-                f"💌 Say hi!"
-            )
-            await update.message.reply_text(p_text)
-            await context.bot.send_message(
-                partner_id,
-                f"💞 You’ve been matched!\n\n"
-                f"👤 Gender: {user.get('gender')}\n"
-                f"🎂 Age: {user.get('age')}\n"
-                f"📍 Location: {user.get('location')}\n"
-                f"💭 Interest: {user.get('interest')}\n"
-                f"💌 Say hi!"
-            )
-            return
-    await update.message.reply_text("😔 No match found yet. Try again later 💭")
 
-# ====== Relay Messages ======
-async def message_relay(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    sender = update.effective_user.id
-    if sender not in active_chats:
-        await update.message.reply_text("⚠️ Not chatting yet. Use /find 💬")
+    if user.get("chatting"):
+        await update.message.reply_text("💬 You’re already chatting with someone!")
         return
-    receiver = active_chats[sender]
-    try:
-        await context.bot.copy_message(chat_id=receiver, from_chat_id=sender, message_id=update.message.message_id)
-    except:
-        await update.message.reply_text("⚠️ Failed to deliver message!")
 
-# ====== Stop Chat ======
+    if user_id in waiting_users:
+        await update.message.reply_text("⏳ You’re already searching for someone…")
+        return
+
+    if waiting_users:
+        partner_id = waiting_users.pop(0)
+        partner = users[partner_id]
+        user["chatting"] = partner_id
+        partner["chatting"] = user_id
+
+        text_self = f"🌟 You’re now connected!\n\n{get_profile_text(partner)}\n\nStart chatting 💬"
+        text_partner = f"🌟 You’re now connected!\n\n{get_profile_text(user)}\n\nSay hi 👋"
+
+        await update.message.reply_text(text_self, parse_mode="Markdown")
+        await context.bot.send_message(partner_id, text_partner, parse_mode="Markdown")
+    else:
+        waiting_users.append(user_id)
+        await update.message.reply_text("🔍 Searching for someone... please wait a moment 🌙")
+
 async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    if user_id not in active_chats:
-        await update.message.reply_text("❌ You’re not in a chat.")
+    user = users.get(user_id)
+    if not user or not user.get("chatting"):
+        await update.message.reply_text("⚠️ You’re not chatting right now.")
         return
-    partner_id = active_chats[user_id]
-    del active_chats[user_id]
-    if partner_id in active_chats:
-        del active_chats[partner_id]
+
+    partner_id = user["chatting"]
+    user["chatting"] = None
+    if partner_id and partner_id in users:
+        partner = users[partner_id]
+        partner["chatting"] = None
         await context.bot.send_message(partner_id, "💔 Your partner left the chat.")
-    await update.message.reply_text("👋 You left the chat.")
+    await update.message.reply_text("❌ Chat ended. Type /find to search again 🔎")
 
-# ====== Help ======
-async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "💫 **MeetAnonymousBOT Commands** 💫\n\n"
-        "🌸 /start – Create your profile\n"
-        "🔍 /find – Find someone new\n"
-        "👤 /profile – View your profile\n"
-        "💔 /stop – End chat\n"
-        "🌷 /help – Show this message again\n\n"
-        "✨ Meet anonymously, connect genuinely 💘",
-        parse_mode="Markdown"
-    )
+# --- Run Telegram bot ---
+def run_bot():
+    app_bot = Application.builder().token(TOKEN).build()
+    app_bot.add_handler(CommandHandler("start", start))
+    app_bot.add_handler(CommandHandler("find", find))
+    app_bot.add_handler(CommandHandler("stop", stop))
+    app_bot.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))
+    print("🤖 MeetAnonymousBOT is now running...")
+    app_bot.run_polling()
 
-# ====== Telegram Application ======
-BOT_TOKEN = "BOT_TOKEN"
-WEBHOOK_URL = "https://telegram-bot-99.onrender.com"
-
-application = Application.builder().token(TOKEN).build()
-
-conv = ConversationHandler(
-    entry_points=[CommandHandler("start", start)],
-    states={
-        1: [MessageHandler(filters.TEXT & ~filters.COMMAND, gender)],
-        2: [MessageHandler(filters.TEXT & ~filters.COMMAND, age)],
-        3: [MessageHandler(filters.TEXT & ~filters.COMMAND, location)],
-        4: [MessageHandler(filters.TEXT & ~filters.COMMAND, interest)],
-    },
-    fallbacks=[]
-)
-
-application.add_handler(conv)
-application.add_handler(CommandHandler("find", find))
-application.add_handler(CommandHandler("profile", profile))
-application.add_handler(CommandHandler("stop", stop))
-application.add_handler(CommandHandler("help", help_cmd))
-application.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, message_relay))
-
-# ====== Run Bot ======
-async def run_bot():
-    load_data()
-    await application.bot.set_webhook(WEBHOOK_URL)
-    print("🚀 Webhook set and MeetAnonymousBOT is live 🌸")
-
-Thread(target=lambda: app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))).start()
-asyncio.run(run_bot())
-        
+# --- Start both Flask & Telegram threads ---
+if __name__ == "__main__":
+    threading.Thread(target=run_bot).start()
+    app.run(host="0.0.0.0", port=int(os.getenv("PORT", 8080)))
+    
