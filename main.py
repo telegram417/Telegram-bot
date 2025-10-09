@@ -8,7 +8,7 @@ from telegram.ext import (
     filters, ConversationHandler
 )
 
-TOKEN = "YOUR_TELEGRAM_BOT_TOKEN_HERE"
+BOT_TOKEN = ("YOUR_TELEGRAM_BOT_TOKEN_HERE")
 
 # --- Storage file
 DATA_FILE = "users.json"
