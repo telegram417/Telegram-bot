@@ -1,4 +1,5 @@
 import os
+import asyncio
 from flask import Flask
 from telegram import (
     Bot, Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -7,7 +8,6 @@ from telegram.ext import (
     CommandHandler, MessageHandler, filters,
     CallbackQueryHandler, ApplicationBuilder, ContextTypes
 )
-import asyncio
 
 # ---------------- CONFIG ----------------
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
@@ -150,12 +150,12 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode="Markdown"
     )
 
-# ---------------- FLASK ROUTES ----------------
+# ---------------- FLASK ROUTE ----------------
 @app.route("/")
 def home():
-    return "🚀 Telegram Bot Running!"
+    return "🚀 MeetAnonymousBot is live!"
 
-# ---------------- BOOTSTRAP ----------------
+# ---------------- BOT LAUNCH ----------------
 async def run_bot():
     app_telegram = ApplicationBuilder().token(BOT_TOKEN).build()
     app_telegram.add_handler(CommandHandler("start", start))
@@ -171,7 +171,10 @@ async def run_bot():
     await app_telegram.bot.set_webhook(url=f"{BASE_URL}/{BOT_TOKEN}")
     await app_telegram.initialize()
     await app_telegram.start()
-    print("✅ Webhook successfully set!")
+    print("✅ Webhook set and bot started successfully!")
 
-asyncio.get_event_loop().create_task(run_bot())
-    
+# --- safe loop start (no DeprecationWarning) ---
+async def startup():
+    asyncio.create_task(run_bot())
+
+asyncio.run(startup())
