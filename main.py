@@ -1,4 +1,24 @@
+#!/usr/bin/env python3
+"""
+AnonChatPlush - Elegant & Minimal anonymous chat Telegram bot (memory-only)
+
+Features:
+- /start -> interactive profile (gender, age, location, interest)
+- /find [gender] [min-max] [interest] -> optional quick filters
+  Example: /find female 18-25 music
+- /stop -> end chat
+- /next -> end current chat and find next
+- /edit -> re-run profile setup
+- /ref -> produce referral link; 3 joins -> 3 days premium (memory)
+- /help -> help message
+- Supports text, photo, sticker, voice, video via copy_message
+"""
+
+import os
 import asyncio
+import logging
+from datetime import datetime, timedelta
+
 from telegram import (
     Update,
     InlineKeyboardButton,
@@ -10,194 +30,405 @@ from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
     MessageHandler,
+    CallbackQueryHandler,
     filters,
     ContextTypes,
-    CallbackQueryHandler,
 )
-import logging
-import os
-import aiohttp
 
-# ================= LOGGING ====================
+# --------- CONFIG ----------
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+BOT_USERNAME = os.getenv("BOT_USERNAME", "MeetAnonymousBOT")  # used for referral links
+REF_REQUIRED = 3
+REF_DAYS = 3
+
+if not BOT_TOKEN:
+    raise RuntimeError("BOT_TOKEN environment variable not set")
+
+# --------- LOGGING ----------
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("AnonChatPlush")
 
-# ================= BOT TOKEN ====================
-BOT_TOKEN = os.getenv("BOT_TOKEN", "YOUR_TELEGRAM_BOT_TOKEN_HERE")
-
-# ================= GLOBAL DATA ====================
+# --------- IN-MEMORY STORAGE ----------
+# user_profiles[user_id] = {
+#   'gender','age','location','interest',
+#   'partner' -> user_id or None,
+#   'awaiting' -> None or one of 'gender','age','location','interest','edit_*',
+#   'search_pref' -> dict like {'gender':..., 'min_age':..., 'max_age':..., 'interest':...}
+#   'invites' -> int, 'premium_until' -> iso str or None
+# }
 user_profiles = {}
-waiting_users = []
-active_chats = {}
-user_states = {}
-ping_interval = 600  # seconds (10 minutes uptime ping)
+# waiting queue holds tuples (user_id)
+waiting = []
+# active chats: user_id -> partner_id
+active = {}
 
-# ================== AESTHETIC TEXT ==================
-def divider():
-    return "━━━━━━━━━━━━━━━━━━━━━━━"
+# --------- HELPERS ----------
+def now_iso():
+    return datetime.utcnow().isoformat()
 
-def sparkle(text):
-    return f"✨ {text} ✨"
+def is_premium(u):
+    until = u.get("premium_until")
+    if not until:
+        return False
+    try:
+        return datetime.fromisoformat(until) > datetime.utcnow()
+    except Exception:
+        return False
 
-# ================== PROFILE CREATION ==================
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    user_profiles[user_id] = {}
-    user_states[user_id] = "gender"
+def grant_premium(u, days=REF_DAYS):
+    until = datetime.utcnow() + timedelta(days=days)
+    u["premium_until"] = until.isoformat()
 
-    keyboard = [
-        [InlineKeyboardButton("♂️ Male", callback_data="Male"),
-         InlineKeyboardButton("♀️ Female", callback_data="Female")],
-        [InlineKeyboardButton("🌈 Other", callback_data="Other")]
-    ]
-    await update.message.reply_text(
-        f"{sparkle('Welcome to MeetAnonymous!')}\n\nLet's set up your profile 💫\n\nChoose your gender:",
-        reply_markup=InlineKeyboardMarkup(keyboard)
+def profile_complete(u):
+    return all(u.get(k) for k in ("gender", "age", "location", "interest"))
+
+def format_profile(u):
+    return (
+        f"👤 Gender: {u.get('gender','—')}\n"
+        f"🎂 Age: {u.get('age','—')}\n"
+        f"📍 Location: {u.get('location','—')}\n"
+        f"💬 Interest: {u.get('interest','—')}"
     )
 
-async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    user_id = query.from_user.id
-    state = user_states.get(user_id)
+def parse_find_args(args_list):
+    # returns dict: {'gender':..., 'min_age':..., 'max_age':..., 'interest':...}
+    pref = {"gender": None, "min_age": None, "max_age": None, "interest": None}
+    if not args_list:
+        return pref
+    # first arg maybe gender
+    idx = 0
+    a0 = args_list[0].lower()
+    if a0 in ("male", "female", "other", "any"):
+        pref["gender"] = None if a0 == "any" else a0.capitalize()
+        idx = 1
+    # next could be age range like 18-25
+    if idx < len(args_list):
+        if "-" in args_list[idx]:
+            r = args_list[idx].split("-", 1)
+            if r[0].isdigit() and r[1].isdigit():
+                pref["min_age"] = int(r[0])
+                pref["max_age"] = int(r[1])
+                idx += 1
+    # remaining joined as interest
+    if idx < len(args_list):
+        pref["interest"] = " ".join(args_list[idx:]).strip().lower()
+    return pref
 
-    await query.answer()
-
-    if state == "gender":
-        user_profiles[user_id]["gender"] = query.data
-        user_states[user_id] = "age"
-        await query.message.reply_text("🎂 Great! Now tell me your age (just send a number):", reply_markup=ReplyKeyboardRemove())
-
-    elif state == "ref_gender":
-        await search_user(update, context, gender_filter=query.data)
-        await query.message.delete()
-
-async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    state = user_states.get(user_id)
-
-    if state == "age":
-        age = update.message.text.strip()
-        if not age.isdigit():
-            await update.message.reply_text("❗Please enter a valid number for your age.")
-            return
-        user_profiles[user_id]["age"] = age
-        user_states[user_id] = "location"
-        await update.message.reply_text("📍 Awesome! Where are you from? 🌏")
-
-    elif state == "location":
-        user_profiles[user_id]["location"] = update.message.text.strip()
-        user_states[user_id] = "interest"
-        await update.message.reply_text("🎯 Cool! What are your interests? (e.g., music, gaming, travel)")
-
-    elif state == "interest":
-        user_profiles[user_id]["interest"] = update.message.text.strip()
-        user_states[user_id] = None
-        await update.message.reply_text(
-            f"✅ Profile created successfully!\n\n{divider()}\n👤 Gender: {user_profiles[user_id]['gender']}\n🎂 Age: {user_profiles[user_id]['age']}\n📍 Location: {user_profiles[user_id]['location']}\n🎯 Interest: {user_profiles[user_id]['interest']}\n{divider()}\n\nUse /find to start chatting 💌",
-        )
-
-    elif user_id in active_chats:
-        partner_id = active_chats[user_id]
+def matches_pref(u, pref):
+    # u is profile dict
+    if not u:
+        return False
+    if pref.get("gender") and u.get("gender") != pref.get("gender"):
+        return False
+    if pref.get("min_age"):
         try:
-            await update.message.copy(chat_id=partner_id)
+            age = int(u.get("age", 0))
+            if age < pref["min_age"]:
+                return False
         except:
-            await update.message.reply_text("⚠️ Could not deliver message to your partner.")
-    else:
-        await update.message.reply_text("💡 Use /find to start chatting!")
+            return False
+    if pref.get("max_age"):
+        try:
+            age = int(u.get("age", 0))
+            if age > pref["max_age"]:
+                return False
+        except:
+            return False
+    if pref.get("interest"):
+        user_interest = (u.get("interest") or "").lower()
+        if pref["interest"] not in user_interest:
+            return False
+    return True
 
-# ================= MATCHING =================
-async def find(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
+# --------- UI helpers (elegant minimal) ----------
+def title(txt):
+    return f"✨ {txt} ✨"
 
-    if user_id in active_chats:
-        await update.message.reply_text("⚠️ You're already chatting! Use /stop to end current chat.")
-        return
+def divider():
+    return "――――――――――――――――"
 
-    for waiting_id in waiting_users:
-        if waiting_id != user_id and waiting_id not in active_chats:
-            active_chats[user_id] = waiting_id
-            active_chats[waiting_id] = user_id
-            waiting_users.remove(waiting_id)
+# --------- COMMANDS & HANDLERS ----------
+async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Start or resume profile setup. Accept referral args like: /start ref<inviter_id>"""
+    uid = update.effective_user.id
+    args = context.args or []
+    # handle referral if present
+    if args:
+        raw = args[0]
+        if raw.startswith("ref"):
+            try:
+                inviter = int(raw[3:])
+                invp = user_profiles.get(inviter)
+                if invp is not None:
+                    invp["invites"] = invp.get("invites", 0) + 1
+                    if invp["invites"] >= REF_REQUIRED:
+                        grant_premium(invp, REF_DAYS)
+                        invp["invites"] = 0
+                        try:
+                            await context.bot.send_message(inviter, f"🎉 Congratulations — you earned {REF_DAYS} days Premium on AnonChatPlush!")
+                        except Exception:
+                            pass
+            except Exception:
+                pass
 
-            await context.bot.send_message(waiting_id, "💫 Matched! You’re now chatting. Send any message to begin 💬")
-            await update.message.reply_text("🎉 You’re now connected! Use /stop to end chat.")
-            return
-
-    waiting_users.append(user_id)
-    await update.message.reply_text("🔍 Looking for someone to chat with... please wait 💫")
-
-async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    partner_id = active_chats.pop(user_id, None)
-
-    if partner_id:
-        active_chats.pop(partner_id, None)
-        await context.bot.send_message(partner_id, "❌ Your partner has left the chat.")
-        await context.bot.send_message(user_id, "✅ You left the chat. Use /find to meet new people 💫")
-    elif user_id in waiting_users:
-        waiting_users.remove(user_id)
-        await update.message.reply_text("🛑 You stopped searching.")
-    else:
-        await update.message.reply_text("ℹ️ You’re not chatting currently.")
-
-async def next_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await stop(update, context)
-    await find(update, context)
-
-# ================= PROFILE COMMANDS =================
-async def edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await start(update, context)
-
-async def ref(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    keyboard = [
-        [InlineKeyboardButton("♂️ Male", callback_data="Male"),
-         InlineKeyboardButton("♀️ Female", callback_data="Female"),
-         InlineKeyboardButton("🌈 Other", callback_data="Other")]
-    ]
-    await update.message.reply_text("🔍 Choose a gender to search for:", reply_markup=InlineKeyboardMarkup(keyboard))
-    user_states[update.effective_user.id] = "ref_gender"
-
-async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # initialize profile
+    user_profiles[uid] = user_profiles.get(uid, {})
+    u = user_profiles[uid]
+    u.setdefault("partner", None)
+    u.setdefault("invites", 0)
+    u.setdefault("premium_until", None)
+    # start flow
+    u["awaiting"] = "gender"
+    kb = ReplyKeyboardMarkup([["Male", "Female", "Other"]], resize_keyboard=True, one_time_keyboard=True)
     await update.message.reply_text(
-        f"{sparkle('MeetAnonymous Help Menu')}\n{divider()}\n"
-        "💬 /start - Create or edit your profile\n"
-        "🔎 /find - Find a random chat partner\n"
-        "⏭️ /next - Skip current chat\n"
-        "❌ /stop - End current chat\n"
-        "🧭 /ref - Search by gender\n"
-        "⚙️ /edit - Edit profile anytime\n"
-        "💡 Send text, photos, stickers, videos or voice freely!\n"
-        f"{divider()}\n💖 Made with love by @MeetAnonymousBOT"
+        f"{title('Welcome to AnonChatPlush')}\n\nA simple anonymous space to meet new people.\n\nPlease select your gender:",
+        reply_markup=kb
     )
 
-# ================= KEEP ALIVE (PING) =================
-async def keep_alive():
-    while True:
+async def _continue_profile_from_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    u = user_profiles.get(uid)
+    if not u:
+        await cmd_start(update, context)
+        return
+    waiting_for = u.get("awaiting")
+    text = (update.message.text or "").strip()
+    if waiting_for == "gender":
+        if text.lower() not in ("male", "female", "other"):
+            await update.message.reply_text("Please choose Male, Female, or Other (use the buttons).")
+            return
+        u["gender"] = text.capitalize()
+        u["awaiting"] = "age"
+        await update.message.reply_text("🎂 Now send your age (number):", reply_markup=ReplyKeyboardRemove())
+        return
+    if waiting_for == "age":
+        if not text.isdigit() or not (10 <= int(text) <= 120):
+            await update.message.reply_text("Please send a valid age number (10-120).")
+            return
+        u["age"] = text
+        u["awaiting"] = "location"
+        await update.message.reply_text("📍 Where are you from? (city or city, country)")
+        return
+    if waiting_for == "location":
+        u["location"] = text
+        u["awaiting"] = "interest"
+        await update.message.reply_text("💬 Lastly — one-line about your interests (e.g. music, travel):")
+        return
+    if waiting_for == "interest":
+        u["interest"] = text
+        u["awaiting"] = None
+        # confirm
+        await update.message.reply_text(
+            f"{divider()}\nProfile saved ✔️\n\n{format_profile(u)}\n{divider()}\nUse /find to meet someone.\nUse /edit to change profile anytime."
+        )
+        return
+    # not awaiting anything: treat as normal chat message or command
+    # if in active chat, handled separately
+    if uid in active:
+        # should be handled by separate message handler; but we put safeguard
+        partner = active.get(uid)
+        if partner:
+            try:
+                await context.bot.copy_message(chat_id=partner, from_chat_id=update.effective_chat.id, message_id=update.message.message_id)
+            except Exception:
+                await update.message.reply_text("Could not forward message to partner.")
+            return
+    # else suggest /find
+    await update.message.reply_text("Use /find to search for a chat partner, or /start to update profile.")
+
+async def cmd_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Reset awaiting to allow re-editing fields step-by-step"""
+    uid = update.effective_user.id
+    if uid not in user_profiles:
+        await cmd_start(update, context)
+        return
+    user_profiles[uid]["awaiting"] = "gender"
+    kb = ReplyKeyboardMarkup([["Male", "Female", "Other"]], resize_keyboard=True, one_time_keyboard=True)
+    await update.message.reply_text("Edit profile — choose new gender:", reply_markup=kb)
+
+async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        f"{title('AnonChatPlush — Help')}\n\n"
+        "• /start — create or edit profile\n"
+        "• /find [gender] [min-max] [interest] — find partner (optional filters)\n"
+        "   examples: /find  /find female 18-25  /find male 20-30 music\n"
+        "• /next — end current chat and find another\n"
+        "• /stop — end current chat\n"
+        "• /edit — edit profile step-by-step\n"
+        "• /ref — get referral link (3 joins → 3 days premium)\n"
+        "• /help — this message\n\n"
+        "You may send text, photos, videos, voice, or stickers while chatting.\n"
+        "All data is stored in memory (resets on restart).",
+    )
+
+async def cmd_ref(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    link = f"https://t.me/{BOT_USERNAME}?start=ref{uid}"
+    u = user_profiles.get(uid, {})
+    invites = u.get("invites", 0)
+    prem = "Active" if is_premium(u) else "None"
+    await update.message.reply_text(
+        f"Share this referral link:\n{link}\n\nInvites: {invites}/{REF_REQUIRED}\nPremium: {prem}\n\nGet {REF_REQUIRED} invites to earn {REF_DAYS} days Premium."
+    )
+
+# matching / find logic
+async def cmd_find(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    args = context.args or []
+    # parse quick filters
+    pref = parse_find_args(args)
+    user_profiles.setdefault(uid, {})
+    u = user_profiles[uid]
+    # ensure profile complete
+    if not profile_complete(u):
+        await update.message.reply_text("Complete your profile first with /start (quick and elegant).")
+        return
+    # If already chatting
+    if uid in active:
+        await update.message.reply_text("You are already in a chat. Use /stop or /next.")
+        return
+    # set user's search_pref
+    u["search_pref"] = pref
+    # Try find candidate in waiting respecting their search_pref and this user's pref too
+    # Search queue from oldest to newest
+    for idx, cand in enumerate(waiting):
+        if cand == uid:
+            continue
+        cand_prof = user_profiles.get(cand)
+        if not cand_prof or cand_prof.get("partner"):
+            continue
+        # candidate's own search preference: if set, check mutual
+        cand_pref = cand_prof.get("search_pref") or {}
+        # match checks: candidate must match uid's pref, and uid must match candidate's pref (if candidate specified)
+        if not matches_pref(cand_prof, pref):
+            continue
+        # if candidate has pref - ensure uid matches
+        if cand_pref and any(cand_pref.values()):
+            if not matches_pref(u, cand_pref):
+                continue
+        # found match
+        waiting.pop(idx)
+        active[uid] = cand
+        active[cand] = uid
+        # notify both
+        await context.bot.send_message(cand, f"💫 You are connected anonymously.\n\n{format_profile(u)}\n\nSay hi.")
+        await context.bot.send_message(uid, f"💫 You are connected anonymously.\n\n{format_profile(cand_prof)}\n\nSay hi.")
+        return
+    # no candidate found -> add to waiting if not present
+    if uid not in waiting:
+        waiting.append(uid)
+    # show searching animation (edit message)
+    msg = await update.message.reply_text("🔎 Searching for a refined connection...")
+    # animate a few edits
+    try:
+        steps = ["🔎 Searching for a refined connection...", "✨ Scanning compatible profiles...", "🌙 Almost there..."]
+        for s in steps:
+            await asyncio.sleep(1.2)
+            await msg.edit_text(s)
+    except Exception:
+        pass
+    await msg.edit_text("⌛ You are in queue. We'll notify you when matched.")
+
+async def end_chat_for_user(uid, context):
+    partner = active.pop(uid, None)
+    if partner:
+        active.pop(partner, None)
         try:
-            async with aiohttp.ClientSession() as session:
-                await session.get("https://meetanonymous.onrender.com")  # Change to your uptime URL if needed
-        except Exception as e:
-            logger.warning(f"Ping failed: {e}")
-        await asyncio.sleep(ping_interval)
+            await context.bot.send_message(partner, "❌ Your partner left the chat. Use /find to meet another.")
+        except Exception:
+            pass
 
-# ================= MAIN =================
+async def cmd_stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    if uid in active:
+        partner = active.get(uid)
+        await end_chat_for_user(uid, context)
+        await update.message.reply_text("✅ You left the chat. Use /find to meet someone new.")
+    elif uid in waiting:
+        waiting.remove(uid)
+        await update.message.reply_text("Stopped searching. Use /find when ready.")
+    else:
+        await update.message.reply_text("You are not in a chat or queue.")
+
+async def cmd_next(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    # remember current search_pref
+    pref = user_profiles.get(uid, {}).get("search_pref")
+    # stop current
+    if uid in active:
+        await end_chat_for_user(uid, context)
+    if uid in waiting:
+        try:
+            waiting.remove(uid)
+        except:
+            pass
+    # call find again with same pref
+    # emulate args building
+    args = []
+    if pref:
+        if pref.get("gender"):
+            args.append(pref["gender"])
+        if pref.get("min_age") and pref.get("max_age"):
+            args.append(f"{pref['min_age']}-{pref['max_age']}")
+        if pref.get("interest"):
+            args.append(pref["interest"])
+    context.args = args
+    await cmd_find(update, context)
+
+# message relay (forward/copy) for active chats (media + text)
+async def relay_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    # handle profile steps if awaiting
+    u = user_profiles.get(uid)
+    if u and u.get("awaiting"):
+        await _continue_profile_from_text(update, context)
+        return
+    # if user in active chat -> copy message
+    if uid in active:
+        partner = active.get(uid)
+        try:
+            # copy_message preserves media, captions, stickers, etc.
+            await context.bot.copy_message(chat_id=partner, from_chat_id=update.effective_chat.id, message_id=update.message.message_id)
+        except Exception:
+            # fallback for text
+            if update.message.text:
+                await context.bot.send_message(partner, update.message.text)
+        return
+    # else not in chat
+    # friendly hint
+    await update.message.reply_text("Use /find to search for someone to chat with. Use /start to set up your profile.")
+
+# callback buttons (none used heavily now but placeholder)
+async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await query.message.reply_text("Action received.")
+
+# --------- BOOTSTRAP & RUN ----------
 async def main():
-    app = ApplicationBuilder().token(BOT_TOKEN).build()
+    application = ApplicationBuilder().token(BOT_TOKEN).build()
 
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("find", find))
-    app.add_handler(CommandHandler("stop", stop))
-    app.add_handler(CommandHandler("next", next_user))
-    app.add_handler(CommandHandler("edit", edit))
-    app.add_handler(CommandHandler("ref", ref))
-    app.add_handler(CommandHandler("help", help_command))
-    app.add_handler(CallbackQueryHandler(handle_callback))
-    app.add_handler(MessageHandler(filters.ALL, message_handler))
+    # commands
+    application.add_handler(CommandHandler("start", cmd_start))
+    application.add_handler(CommandHandler("find", cmd_find))
+    application.add_handler(CommandHandler("stop", cmd_stop))
+    application.add_handler(CommandHandler("next", cmd_next))
+    application.add_handler(CommandHandler("edit", cmd_edit))
+    application.add_handler(CommandHandler("ref", cmd_ref))
+    application.add_handler(CommandHandler("help", cmd_help))
 
-    asyncio.create_task(keep_alive())
+    # callback queries
+    application.add_handler(CallbackQueryHandler(callback_handler))
 
-    logger.info("Bot is running... 🚀")
-    await app.run_polling()
+    # message relay & profile input
+    application.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, relay_message))
+
+    logger.info("AnonChatPlush starting (long polling)...")
+    await application.run_polling()
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except (KeyboardInterrupt, SystemExit):
+        logger.info("Shutting down AnonChatPlush.")
+    
