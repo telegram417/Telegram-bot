@@ -9,7 +9,7 @@ from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQu
 
 # ---------- CONFIG ----------
 TOKEN = os.getenv("BOT_TOKEN")                     # set in Render env
-BASE_URL = os.getenv("BASE_URL")                   # e.g. https://telegram-bot-99.onrender.com
+BASE_URL = os.getenv("https://telegram-bot-99.onrender.com")                   # e.g. https://telegram-bot-99.onrender.com
 BOT_USERNAME = os.getenv("BOT_USERNAME", "MeetAnonymousBOT")
 PREMIUM_INVITES_REQUIRED = 5
 PREMIUM_DAYS = 3
