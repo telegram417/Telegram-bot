@@ -1,7 +1,7 @@
 import os
-from flask import Flask, request
+from flask import Flask
 from telegram import (
-    Bot, Update, InlineKeyboardButton, InlineKeyboardMarkup, InputFile
+    Bot, Update, InlineKeyboardButton, InlineKeyboardMarkup
 )
 from telegram.ext import (
     CommandHandler, MessageHandler, filters,
@@ -88,7 +88,6 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"✅ {field.capitalize()} updated!")
         return
 
-    # chatting
     if uid in chats:
         partner = chats[uid]
         msg = update.message
@@ -151,13 +150,13 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode="Markdown"
     )
 
-# ---------------- FLASK APP ----------------
+# ---------------- FLASK ROUTES ----------------
 @app.route("/")
 def home():
     return "🚀 Telegram Bot Running!"
 
-# ---------------- START BOT ----------------
-async def main():
+# ---------------- BOOTSTRAP ----------------
+async def run_bot():
     app_telegram = ApplicationBuilder().token(BOT_TOKEN).build()
     app_telegram.add_handler(CommandHandler("start", start))
     app_telegram.add_handler(CommandHandler("profile", profile))
@@ -169,16 +168,10 @@ async def main():
     app_telegram.add_handler(CallbackQueryHandler(button_handler))
     app_telegram.add_handler(MessageHandler(filters.ALL, message_handler))
 
-    print("🚀 Bot started successfully.")
-    await app_telegram.run_webhook(
-        listen="0.0.0.0",
-        port=PORT,
-        url_path=BOT_TOKEN,
-        webhook_url=f"{BASE_URL}/{BOT_TOKEN}"
-    )
+    await app_telegram.bot.set_webhook(url=f"{BASE_URL}/{BOT_TOKEN}")
+    await app_telegram.initialize()
+    await app_telegram.start()
+    print("✅ Webhook successfully set!")
 
-if __name__ == "__main__":
-    loop = asyncio.get_event_loop()
-    loop.create_task(main())
-    app.run(host="0.0.0.0", port=PORT)
-                                                           
+asyncio.get_event_loop().create_task(run_bot())
+    
