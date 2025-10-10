@@ -1,17 +1,7 @@
 import os
-from telegram import (
-    Update,
-    InlineKeyboardMarkup,
-    InlineKeyboardButton,
-    ReplyKeyboardMarkup,
-)
-from telegram.ext import (
-    Application,
-    CommandHandler,
-    MessageHandler,
-    filters,
-    ContextTypes,
-)
+import asyncio
+from telegram import Update, ReplyKeyboardMarkup
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
 TOKEN = os.getenv("BOT_TOKEN")
 
@@ -88,7 +78,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # 👥 If chatting
     if user.get("partner"):
         partner_id = user["partner"]
         await context.bot.send_message(partner_id, text)
@@ -96,7 +85,20 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("⚠️ You’re not in a chat. Type /find to start chatting.")
 
 
-# 🔎 Match users
+# ✨ Animated searching
+async def searching_animation(message, context):
+    animations = [
+        "🔍 Searching for your next connection...",
+        "💫 Looking around the world...",
+        "🌎 Finding someone who matches your vibe...",
+        "❤️ Almost there...",
+    ]
+    for step in animations:
+        await message.edit_text(step)
+        await asyncio.sleep(2)
+
+
+# 🔎 Find partner
 async def find(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     user = users.get(user_id)
@@ -106,10 +108,9 @@ async def find(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if user.get("partner"):
-        await update.message.reply_text("⚠️ You are already chatting with someone. Use /stop to end the chat.")
+        await update.message.reply_text("⚠️ You’re already chatting! Use /stop to end it.")
         return
 
-    # If someone waiting, match them
     if waiting_users and waiting_users[0] != user_id:
         partner_id = waiting_users.pop(0)
         partner = users.get(partner_id)
@@ -137,12 +138,13 @@ async def find(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"💭 *Interest:* {user['interest']}"
             )
             await context.bot.send_message(partner_id, f"✨ *Your partner’s info:*\n{info_partner}", parse_mode="Markdown")
-
         else:
-            await update.message.reply_text("⚠️ Partner was busy. Try /find again.")
+            await update.message.reply_text("⚠️ Partner got busy. Try /find again.")
     else:
         waiting_users.append(user_id)
-        await update.message.reply_text("🔍 Searching for your next connection... Please wait 💫")
+        msg = await update.message.reply_text("🔍 Searching for your next connection...")
+        await searching_animation(msg, context)
+        await msg.edit_text("⏳ Still searching... Please wait 💫")
 
 
 # 🛑 Stop chat
@@ -160,10 +162,10 @@ async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if partner:
         partner["partner"] = None
         await context.bot.send_message(partner_id, "❌ Your partner left the chat.")
-        await context.bot.send_message(partner_id, "💔 Want to find someone new?\nType /find to search again 💫")
+        await context.bot.send_message(partner_id, "💔 Want to meet someone new? Type /find 💫")
 
     user["partner"] = None
-    await update.message.reply_text("✅ You left the chat. Type /find to search again 💌")
+    await update.message.reply_text("✅ You left the chat. Type /find to meet new people 💌")
 
 
 # 🆘 Help
@@ -193,7 +195,7 @@ async def ref(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("⚠️ You need a Telegram username to use referrals.")
 
 
-# 🚀 Run bot
+# 🚀 Build App
 def build_app(token):
     app = Application.builder().token(token).build()
     app.add_handler(CommandHandler("start", start))
@@ -211,5 +213,5 @@ if __name__ == "__main__":
     else:
         print("🚀 MeetAnonymousBot is running...")
         app = build_app(TOKEN)
-        app.run_polling()
+        app.run_polling(allowed_updates=Update.ALL_TYPES)
     
