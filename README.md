@@ -1,16 +1,19 @@
-# AnonChatPlush
+# Anonymous Chat Telegram Bot
 
-AnonChatPlush is an elegant anonymous matchmaking Telegram bot (memory-only).
+A simple anonymous chat bot with a referral-based premium system.
+Runs perfectly on Render Free Plan (Web Service).
 
-## Deploy
-1. Create a new **Worker** (not web service) on Render or similar.
-2. Set environment variables:
-   - `BOT_TOKEN` = your bot token (from @BotFather)
-   - `BOT_USERNAME` = (optional) e.g. MeetAnonymousBOT
-3. Add files: `main.py`, `requirements.txt`, `Procfile`.
-4. Start the worker (Render will run `python main.py`).
-5. Keep the worker alive with UptimeRobot if needed.
+## Features
+- /start - welcome
+- /find - premium-only chat find
+- /ref - referral system (3 invites = 3-day premium)
+- /stop - end chat
+- Lightweight + Flask for Render port binding
 
-## Notes
-- Data is stored only in memory and resets on restart.
-- Referral link: https://t.me/<BOT_USERNAME>?start=ref<your_id>
+## How to Deploy on Render
+1. Create a new Web Service
+2. Add your bot files
+3. Add environment variable:
+   - TOKEN = your_telegram_bot_token
+4. Start command:
+5. 
