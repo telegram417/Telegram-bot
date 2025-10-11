@@ -16,4 +16,3 @@ Runs perfectly on Render Free Plan (Web Service).
 3. Add environment variable:
    - TOKEN = your_telegram_bot_token
 4. Start command:
-5. 
