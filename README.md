@@ -1,18 +1,30 @@
-# Anonymous Chat Telegram Bot
+# AnonChatPlush — Telegram anonymous chat bot
 
-A simple anonymous chat bot with a referral-based premium system.
-Runs perfectly on Render Free Plan (Web Service).
+Lightweight anonymous chat bot (profile + matching), built with python-telegram-bot and Flask.
+Designed to run on Render (free web service).
 
-## Features
-- /start - welcome
-- /find - premium-only chat find
-- /ref - referral system (3 invites = 3-day premium)
-- /stop - end chat
-- Lightweight + Flask for Render port binding
+## Files
+- `main.py` — launcher (starts Flask + Telegram bot in child process)
+- `requirements.txt` — dependencies
+- `Procfile` — instructs Render to run Gunicorn
 
-## How to Deploy on Render
-1. Create a new Web Service
-2. Add your bot files
-3. Add environment variable:
-   - TOKEN = your_telegram_bot_token
-4. Start command:
+## Commands
+- `/start` — Setup profile (gender → age → location → interest)
+- `/profile` — View & edit profile
+- `/edit` — Edit profile
+- `/find [gender]` — Find a partner (optional: `male`, `female`, `other`)
+- `/stop` — Leave chat (partner is notified)
+- `/next` — Skip and find another
+- `/help` — List commands
+
+## Deploy (Render)
+1. Push this repo to GitHub.
+2. Create a **Web Service** pointing to this repo/branch.
+3. Set environment variable: `BOT_TOKEN` = (your @BotFather token).
+4. Deploy. Render will run Gunicorn (see `Procfile`).
+5. Optionally add an Uptime monitor (UptimeRobot) to ping `https://<your-app>.onrender.com/` every 5 minutes to keep it awake.
+
+## Notes
+- Data is stored in-memory (lightweight). Restarting the service clears stored profiles.
+- `--workers 1` is required to avoid Telegram `Conflict` errors.
+- 
