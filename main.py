@@ -1,53 +1,62 @@
 import logging
 import threading
-from flask import Flask, request
+import asyncio
+import os
+from flask import Flask
 from telegram import Update, Bot
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
     MessageHandler,
     ContextTypes,
-    filters,
+    filters
 )
-import asyncio
-import os
 
+# Telegram token from Render environment
 TOKEN = os.getenv("BOT_TOKEN")
 if not TOKEN:
-    raise ValueError("BOT_TOKEN environment variable missing!")
+    raise ValueError("BOT_TOKEN environment variable is missing!")
 
 bot = Bot(token=TOKEN)
 
-# Logging
+# Logging setup
 logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
+    format="%(asctime)s - %(levelname)s - %(message)s", level=logging.INFO
 )
-logger = logging.getLogger("AnonChatPlush")
+logger = logging.getLogger("AnonChatBot")
 
-# Flask app
+# Flask app for Render health check
 app = Flask(__name__)
 
-# Store anonymous chat pairs
+@app.route('/')
+def home():
+    return "✅ AnonChat Bot is alive and running on Render!"
+
+# Anonymous chat state
 waiting_users = set()
 active_chats = {}
 
-# ========================= Telegram Bot =========================
+# ==================== BOT COMMANDS ====================
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("👋 Welcome to *AnonChat+!* Type /find to connect!", parse_mode="Markdown")
+    await update.message.reply_text(
+        "👋 Welcome to *AnonChat+!*\nType /find to meet someone new 👀",
+        parse_mode="Markdown"
+    )
 
 async def find(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
     if user_id in active_chats:
-        await update.message.reply_text("⚠️ You are already chatting. Type /end to leave first.")
+        await update.message.reply_text("⚠️ You’re already in a chat! Use /end to leave.")
         return
 
     if waiting_users:
         partner = waiting_users.pop()
         active_chats[user_id] = partner
         active_chats[partner] = user_id
-        await context.bot.send_message(partner, "🎯 You’ve been connected! Say hi 👋")
-        await update.message.reply_text("✅ Partner found! Start chatting.")
+
+        await context.bot.send_message(partner, "✅ Partner found! Say hi 👋")
+        await update.message.reply_text("🎯 You’ve been connected! Start chatting.")
     else:
         waiting_users.add(user_id)
         await update.message.reply_text("⌛ Waiting for a partner...")
@@ -64,27 +73,46 @@ async def end(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await context.bot.send_message(partner, "❌ Your partner has left the chat.")
     await update.message.reply_text("👋 You left the chat.")
 
-async def msg_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "📘 *Commands List:*\n"
+        "/start - Start the bot\n"
+        "/find - Find a chat partner\n"
+        "/end - End your chat\n"
+        "/help - Show this message",
+        parse_mode="Markdown"
+    )
+
+async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
     if user_id in active_chats:
         partner = active_chats[user_id]
         await context.bot.send_message(partner, update.message.text)
     else:
-        await update.message.reply_text("💬 Use /find to start chatting with someone!")
+        await update.message.reply_text("💬 Use /find to start chatting!")
 
-async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = (
-        "📘 *Commands List:*\n"
-        "/start - Start the bot\n"
-        "/find - Find a chat partner\n"
-        "/end - End your chat\n"
-        "/help - Show help message"
-    )
-    await update.message.reply_text(text, parse_mode="Markdown")
+# ==================== RUN BOTH BOT + FLASK ====================
 
-# ========================= Flask Routes =========================
-@app.route('/')
-def home():
-    return "AnonChat+ is running ✅"
+async def run_bot():
+    app_tg = ApplicationBuilder().token(TOKEN).build()
 
-@app.route(f'/{TOKEN}', methods
+    app_tg.add_handler(CommandHandler("start", start))
+    app_tg.add_handler(CommandHandler("find", find))
+    app_tg.add_handler(CommandHandler("end", end))
+    app_tg.add_handler(CommandHandler("help", help_cmd))
+    app_tg.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))
+
+    logger.info("🚀 Telegram bot started successfully.")
+    await app_tg.run_polling()
+
+def start_bot_thread():
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(run_bot())
+
+if __name__ == "__main__":
+    # Run bot in background thread
+    threading.Thread(target=start_bot_thread, daemon=True).start()
+
+    # Run Flask app
+    app.run(host="0.0.0.0", port=10000)
