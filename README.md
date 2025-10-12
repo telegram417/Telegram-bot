@@ -1,30 +1,23 @@
-# AnonChatPlush — Telegram anonymous chat bot
+# AnonChatPlush — Anonymous Telegram Chat Bot
 
-Lightweight anonymous chat bot (profile + matching), built with python-telegram-bot and Flask.
-Designed to run on Render (free web service).
+## What it is
+AnonChatPlush is an anonymous matching Telegram bot (in-memory profiles).  
+Commands: `/start`, `/profile`, `/edit`, `/find [gender]`, `/next`, `/stop`, `/help`.
 
 ## Files
-- `main.py` — launcher (starts Flask + Telegram bot in child process)
+- `main.py` — Flask + Telegram bot launcher
 - `requirements.txt` — dependencies
-- `Procfile` — instructs Render to run Gunicorn
+- `Procfile` — tells Render to run Gunicorn
 
-## Commands
-- `/start` — Setup profile (gender → age → location → interest)
-- `/profile` — View & edit profile
-- `/edit` — Edit profile
-- `/find [gender]` — Find a partner (optional: `male`, `female`, `other`)
-- `/stop` — Leave chat (partner is notified)
-- `/next` — Skip and find another
-- `/help` — List commands
-
-## Deploy (Render)
-1. Push this repo to GitHub.
-2. Create a **Web Service** pointing to this repo/branch.
-3. Set environment variable: `BOT_TOKEN` = (your @BotFather token).
-4. Deploy. Render will run Gunicorn (see `Procfile`).
-5. Optionally add an Uptime monitor (UptimeRobot) to ping `https://<your-app>.onrender.com/` every 5 minutes to keep it awake.
+## Deploy on Render
+1. Create a new Web Service on Render and connect the repo.
+2. Add environment variable:
+   - `BOT_TOKEN` = `<your bot token from BotFather>`
+3. Deploy. Render will install packages and run Gunicorn.
+4. Optionally set up UptimeRobot to ping `https://<your-app>.onrender.com/` every 5 minutes to reduce sleep.
 
 ## Notes
-- Data is stored in-memory (lightweight). Restarting the service clears stored profiles.
-- `--workers 1` is required to avoid Telegram `Conflict` errors.
+- Data is stored in-memory only (no persistent DB).
+- `--workers 1` in Procfile is required to prevent multiple bot instances.
+- If you want persistence (JSON or Firebase), I can add that later.
 - 
