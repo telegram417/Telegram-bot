@@ -1,4 +1,0 @@
-python-telegram-bot==20.3
-Flask==3.0.3
-httpx==0.24.1
-gunicorn==21.2.0
