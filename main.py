@@ -4,21 +4,30 @@ from telegram.ext import (
     ApplicationBuilder, CommandHandler, MessageHandler,
     filters, ContextTypes, ConversationHandler
 )
+from flask import Flask
+import threading
+import os
 
-# Enable logging
+# Flask app (keeps Render web service alive)
+server = Flask(__name__)
+
+@server.route('/')
+def home():
+    return "Bot is running!"
+
+def run_flask():
+    server.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
+
+# Telegram Bot setup
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Conversation states
 GENDER, AGE, LOCATION, INTEREST = range(4)
-
-# In-memory user data (not saved permanently)
 users = {}
 waiting_users = []
 active_chats = {}
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
     await update.message.reply_text(
         "👋 Hey there! Welcome to *Anonymous Chat Bot* 🤫\n\n"
         "Let’s set up your profile.\n\n"
@@ -68,7 +77,6 @@ async def find(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("💬 You’re already chatting. Use /leave to end it first.")
         return
 
-    # Try to find a match
     match = None
     for uid in waiting_users:
         if uid != user_id:
@@ -122,7 +130,7 @@ async def forward_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("⚠️ You’re not in a chat. Use /find to connect!")
 
 def main():
-    TOKEN = "YOUR_BOT_TOKEN_HERE"
+    TOKEN = os.getenv("BOT_TOKEN")
     app = ApplicationBuilder().token(TOKEN).build()
 
     conv_handler = ConversationHandler(
@@ -142,8 +150,10 @@ def main():
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, forward_message))
 
+    # Run bot and Flask together
+    threading.Thread(target=run_flask).start()
     app.run_polling()
 
 if __name__ == "__main__":
     main()
-        
+    
