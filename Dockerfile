@@ -1,8 +1,5 @@
-FROM python:3.11-slim
-
+FROM python:3.10
 WORKDIR /app
-COPY anon_bot.py .
-RUN pip install --no-cache-dir python-telegram-bot
-
-ENV TELEGRAM_TOKEN=""
-CMD ["python", "anon_bot.py"]
+COPY . .
+RUN pip install -r requirements.txt
+CMD ["python", "main.py"]
