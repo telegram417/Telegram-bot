@@ -15,8 +15,11 @@ server = Flask(__name__)
 def home():
     return "✅ Anonymous Chat Bot is running!"
 
-def run_flask():
-    server.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
+async def run_flask():
+    import uvicorn
+    config = uvicorn.Config(app=server, host="0.0.0.0", port=int(os.environ.get("PORT",10000)))
+    server_instance = uvicorn.Server(config)
+    await server_instance.serve()
 
 # ------------------ Logging ------------------
 logging.basicConfig(level=logging.INFO)
@@ -217,59 +220,5 @@ async def help_cmd(update:Update,context:ContextTypes.DEFAULT_TYPE):
         "/next – Skip 🔁\n"
         "/leave – Leave chat 🚪\n"
         "/edit – Edit profile ✏️\n"
-        "/help – This guide ℹ️\n\n"
-        "✨ Supports *text, sticker, photo, video, voice*.",
-        parse_mode="Markdown"
-    )
-
-# ------------------ Relay Messages ------------------
-async def relay_message(update:Update,context:ContextTypes.DEFAULT_TYPE):
-    msg:Message=update.effective_message
-    from_id=update.effective_chat.id
-    if from_id not in active_chats: return
-    to_id=active_chats.get(from_id)
-    if not to_id: unpair_user(from_id); return
-    try:
-        if msg.text and not (msg.sticker or msg.photo or msg.video or msg.voice or msg.document or msg.animation):
-            await context.bot.send_message(chat_id=to_id,text=msg.text)
-        else:
-            await context.bot.copy_message(chat_id=to_id,from_chat_id=from_id,message_id=msg.message_id)
-    except:
-        logger.exception("Failed to forward, unpairing")
-        unpair_user(from_id)
-
-# ------------------ Main ------------------
-def main():
-    app=ApplicationBuilder().token(TOKEN).build()
-
-    start_conv=ConversationHandler(
-        entry_points=[CommandHandler("start",start_cmd)],
-        states={
-            GENDER:[MessageHandler(filters.TEXT & ~filters.COMMAND,start_gender)],
-            AGE:[MessageHandler(filters.TEXT & ~filters.COMMAND,start_age)],
-            LOCATION:[MessageHandler(filters.TEXT & ~filters.COMMAND,start_location)],
-            INTEREST:[MessageHandler(filters.TEXT & ~filters.COMMAND,start_interest)]
-        },
-        fallbacks=[]
-    )
-
-    edit_conv=ConversationHandler(
-        entry_points=[CommandHandler("edit",edit_cmd)],
-        states={
-            EDIT_CHOICE:[MessageHandler(filters.TEXT & ~filters.COMMAND,edit_choice)],
-            EDIT_VALUE:[MessageHandler(filters.TEXT & ~filters.COMMAND,edit_value)]
-        },
-        fallbacks=[]
-    )
-
-    app.add_handler(start_conv)
-    app.add_handler(edit_conv)
-    app.add_handler(CommandHandler("find",find_cmd))
-    app.add_handler(CommandHandler("leave",leave_cmd))
-    app.add_handler(CommandHandler("next",next_cmd))
-    app.add_handler(CommandHandler("help",help_cmd))
-    app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND,relay_message))
-
-    import threading
-    threading.Thread(target=run_flask).start()
-    logger.info
+        "/help – This
+    
