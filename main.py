@@ -34,6 +34,8 @@ waiting_users = []  # list of chat_ids waiting to match
 active_chats = {}   # chat_id -> partner_chat_id
 
 # ------------------ Environment ------------------
+from dotenv import load_dotenv
+load_dotenv()
 TOKEN = os.getenv("BOT_TOKEN")
 if not TOKEN:
     raise SystemExit("❌ BOT_TOKEN is required in environment variables")
@@ -225,7 +227,6 @@ async def help_cmd(update:Update,context:ContextTypes.DEFAULT_TYPE):
         parse_mode="Markdown"
     )
 
-# ------------------ Relay Messages ------------------
 async def relay_message(update:Update,context:ContextTypes.DEFAULT_TYPE):
     msg:Message=update.effective_message
     from_id=update.effective_chat.id
@@ -241,7 +242,6 @@ async def relay_message(update:Update,context:ContextTypes.DEFAULT_TYPE):
         logger.exception("Failed to forward, unpairing")
         unpair_user(from_id)
 
-# ------------------ Main ------------------
 async def main():
     app=ApplicationBuilder().token(TOKEN).build()
 
