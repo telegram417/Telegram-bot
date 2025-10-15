@@ -1,18 +1,30 @@
 import os
+import threading
+from flask import Flask
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder, CommandHandler, MessageHandler,
     filters, ContextTypes, CallbackQueryHandler
 )
 
+# 🔐 Tokens
 BOT_TOKEN = os.getenv("BOT_TOKEN")
+API_ID = os.getenv("API_ID")
+API_HASH = os.getenv("API_HASH")
 
-# Store user data
+# 🌍 Create small Flask web server (for Render free hosting)
+app = Flask(__name__)
+
+@app.route('/')
+def home():
+    return "🤖 Anonymous Telegram Bot is running!"
+
+# 🧠 Data
 users = {}
-waiting = set()
+waiting = {"male": set(), "female": set(), "all": set()}
 chats = {}
 
-# 🌟 Helper functions
+# 💬 Helper
 def get_user_summary(user_id):
     user = users[user_id]
     return (
@@ -22,35 +34,24 @@ def get_user_summary(user_id):
         f"🎯 Interest: {user['interest']}"
     )
 
-async def send_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    keyboard = [
-        [InlineKeyboardButton("🔍 Search", callback_data="find")],
-        [InlineKeyboardButton("📝 Edit Info", callback_data="edit")],
-        [InlineKeyboardButton("ℹ️ Help", callback_data="help")]
-    ]
-    await update.message.reply_text(
-        "Choose an option 👇",
-        reply_markup=InlineKeyboardMarkup(keyboard)
-    )
-
-# 🟢 /start command
+# 🟢 /start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     users[user_id] = {"stage": "gender"}
-    await update.message.reply_text("👋 Welcome to Anonymous Chat!\n\nPlease enter your gender (Male/Female/Other):")
+    await update.message.reply_text("👋 Welcome to *Anonymous Chat!*\n\nPlease enter your **gender** (Male/Female/Other):", parse_mode="Markdown")
 
-# 🧍 Collect user info
+# 🧍 Collect info
 async def collect_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if user_id not in users:
-        await update.message.reply_text("Use /start first!")
+        await update.message.reply_text("Please use /start first ⚙️")
         return
 
     user = users[user_id]
     text = update.message.text
 
     if user["stage"] == "gender":
-        user["gender"] = text
+        user["gender"] = text.lower()
         user["stage"] = "age"
         await update.message.reply_text("🎂 Enter your age:")
     elif user["stage"] == "age":
@@ -66,105 +67,137 @@ async def collect_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user["stage"] = "done"
         await update.message.reply_text("✅ Profile saved!\n\nUse /find to start chatting 🔍")
     else:
-        # If chatting
         if user_id in chats:
             partner_id = chats[user_id]
             await context.bot.send_message(partner_id, f"💬 Stranger: {text}")
         else:
             await update.message.reply_text("❗ You're not in a chat. Use /find to start.")
 
-# 🔍 /find command
+# 🔍 /find
 async def find(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    if user_id in chats:
-        await update.message.reply_text("❗ You're already chatting. Use /next or /stop.")
-        return
-
     if user_id not in users or users[user_id].get("stage") != "done":
-        await update.message.reply_text("⚙️ Please complete your profile with /start first.")
+        await update.message.reply_text("⚙️ Please complete your profile first with /start.")
         return
 
-    if waiting:
-        partner_id = waiting.pop()
+    if user_id in chats:
+        await update.message.reply_text("❗ You're already chatting. Use /stop or /next.")
+        return
+
+    if waiting["all"]:
+        partner_id = waiting["all"].pop()
         chats[user_id] = partner_id
         chats[partner_id] = user_id
-
-        await context.bot.send_message(
-            user_id, f"🎉 Found a match!\n\n{get_user_summary(partner_id)}\n\nSay hi! 👋"
-        )
-        await context.bot.send_message(
-            partner_id, f"🎉 Found a match!\n\n{get_user_summary(user_id)}\n\nSay hi! 👋"
-        )
+        await context.bot.send_message(partner_id, f"🎉 Matched!\n\n{get_user_summary(user_id)}\n\nSay hi 👋")
+        await update.message.reply_text(f"🎉 Found someone!\n\n{get_user_summary(partner_id)}\n\nStart chatting 👋")
     else:
-        waiting.add(user_id)
+        waiting["all"].add(user_id)
         await update.message.reply_text("🔎 Searching for someone... please wait!")
 
-# ⏹️ /stop command
+# ⏹️ /stop
 async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if user_id not in chats:
-        await update.message.reply_text("❗ You're not in a chat.")
+        await update.message.reply_text("❗ You’re not in a chat.")
         return
 
     partner_id = chats.pop(user_id)
     chats.pop(partner_id, None)
+    await context.bot.send_message(partner_id, "⚠️ The user left the chat.")
 
-    await context.bot.send_message(partner_id, "⚠️ The other user has left the chat.")
-    await update.message.reply_text("✅ You have left the chat. Use /find to chat again.")
+    keyboard = [
+        [InlineKeyboardButton("👩 Search Female", callback_data="search_female")],
+        [InlineKeyboardButton("👨 Search Male", callback_data="search_male")],
+        [InlineKeyboardButton("🔁 Search Anyone", callback_data="search_any")]
+    ]
+    await update.message.reply_text(
+        "✅ You left the chat.\nWant to find someone new?",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
 
-# 🔄 /next command
+# 🔄 /next
 async def next_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await stop(update, context)
     await find(update, context)
 
-# 📝 /edit command
+# 📝 /edit
 async def edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     users[user_id]["stage"] = "gender"
-    await update.message.reply_text("📝 Let's update your info!\nEnter your gender:")
+    await update.message.reply_text("📝 Let’s update your info!\nEnter your gender:")
 
-# ℹ️ /help command
+# ℹ️ /help
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    help_text = (
-        "🤖 *Anonymous Chat Bot Commands*\n\n"
-        "/start - Register your info 👤\n"
-        "/find - Search for a partner 🔍\n"
+    await update.message.reply_text(
+        "🤖 *Anonymous Chat Commands*\n\n"
+        "/start - Register 👤\n"
+        "/find - Search 🔍\n"
         "/next - Find someone new 🔄\n"
-        "/stop - Leave the current chat ⏹️\n"
-        "/edit - Edit your info 📝\n"
-        "/help - Show this help message ℹ️"
+        "/stop - Leave chat ⏹️\n"
+        "/edit - Edit info 📝\n"
+        "/help - Show help ℹ️\n\n"
+        "You can send *text, stickers, voice, photos, and videos* 🎥🎤",
+        parse_mode="Markdown"
     )
-    await update.message.reply_text(help_text, parse_mode="Markdown")
 
-# 🔘 Handle buttons
+# 📸 Handle stickers, photos, etc.
+async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if user_id in chats:
+        partner_id = chats[user_id]
+        if update.message.sticker:
+            await context.bot.send_sticker(partner_id, update.message.sticker.file_id)
+        elif update.message.photo:
+            await context.bot.send_photo(partner_id, update.message.photo[-1].file_id)
+        elif update.message.video:
+            await context.bot.send_video(partner_id, update.message.video.file_id)
+        elif update.message.voice:
+            await context.bot.send_voice(partner_id, update.message.voice.file_id)
+    else:
+        await update.message.reply_text("❗ You're not chatting. Use /find to start.")
+
+# 🔘 Buttons
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     data = query.data
+    user_id = query.from_user.id
 
-    if data == "find":
+    if data == "search_female":
+        waiting["female"].add(user_id)
+        await query.edit_message_text("🔎 Searching for a female...")
+    elif data == "search_male":
+        waiting["male"].add(user_id)
+        await query.edit_message_text("🔎 Searching for a male...")
+    elif data == "search_any":
         await find(update, context)
-    elif data == "edit":
-        await edit(update, context)
-    elif data == "help":
-        await help_command(update, context)
 
-# 🚀 Main
-def main():
-    app = ApplicationBuilder().token(BOT_TOKEN).build()
+# 🧠 Bot thread
+def run_bot():
+    app_telegram = ApplicationBuilder().token(BOT_TOKEN).build()
 
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("find", find))
-    app.add_handler(CommandHandler("stop", stop))
-    app.add_handler(CommandHandler("next", next_chat))
-    app.add_handler(CommandHandler("edit", edit))
-    app.add_handler(CommandHandler("help", help_command))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, collect_info))
-    app.add_handler(CallbackQueryHandler(button_handler))
+    app_telegram.add_handler(CommandHandler("start", start))
+    app_telegram.add_handler(CommandHandler("find", find))
+    app_telegram.add_handler(CommandHandler("stop", stop))
+    app_telegram.add_handler(CommandHandler("next", next_chat))
+    app_telegram.add_handler(CommandHandler("edit", edit))
+    app_telegram.add_handler(CommandHandler("help", help_command))
+    app_telegram.add_handler(CallbackQueryHandler(button_handler))
 
-    print("🤖 Bot is running...")
-    app.run_polling()
+    app_telegram.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, collect_info))
+    app_telegram.add_handler(MessageHandler(filters.Sticker.ALL, handle_media))
+    app_telegram.add_handler(MessageHandler(filters.PHOTO, handle_media))
+    app_telegram.add_handler(MessageHandler(filters.VIDEO, handle_media))
+    app_telegram.add_handler(MessageHandler(filters.VOICE, handle_media))
+
+    print("🤖 Telegram bot running...")
+    app_telegram.run_polling()
 
 if __name__ == "__main__":
-    main()
-    
+    # Run Telegram bot in separate thread
+    threading.Thread(target=run_bot).start()
+
+    # Run Flask web server for Render free plan
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
+        
