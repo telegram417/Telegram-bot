@@ -370,11 +370,18 @@ async def general_handler(event):
         try:
             await client.forward_messages(entity=partner, messages=event.message, from_peer=event.message.peer_id)
         except Exception:
-            # fallback: if message has media, re-send
-            if event.message.media:
+            # Send message anonymously (no "forwarded from" tag)
+        if event.message.media:
+            try:
                 await client.send_file(partner, file=event.message.media, caption=event.message.text or "")
-            else:
-                await client.send_message(partner, event.message.text or "[Unsupported message type]")
+            except Exception:
+                await client.send_message(partner, event.message.text or "[Media delivery failed]")
+        else:
+            try:
+                await client.send_message(partner, event.message.text or "")
+            except Exception:
+                pass
+            
         return
 
     # if not in a chat and not in TEMP, ignore or prompt
