@@ -1,9 +1,0 @@
-services:
-  - type: web
-    name: anonymous-chat-bot
-    env: python
-    plan: free
-    pythonVersion: 3.10
-    buildCommand: pip install -r requirements.txt
-    startCommand: python main.py
-    
